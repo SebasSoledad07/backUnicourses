@@ -1,64 +1,86 @@
-from rest_framework.views import APIView
+from rest_framework import viewsets, status, generics
 from rest_framework.response import Response
-from rest_framework import status
-from django.contrib.auth.models import User
-from django.contrib.auth.hashers import make_password
-from django.contrib.auth import authenticate
-from rest_framework.permissions import IsAuthenticated
-from .models import UserProfile
-from .serializers import UserProfileSerializer
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.parsers import MultiPartParser, FormParser
+from django.contrib.auth import get_user_model
+from django.shortcuts import get_object_or_404
+from .models import UserProfile, Interest
+from .serializers import (
+    UserSerializer, UserProfileSerializer, RegisterSerializer,
+    InterestSerializer
+)
+from .permissions import IsAdminUserProfile, IsAdminOrOwner, CanCreateAdmin, IsAdminOrReadOnly
 
-class RegisterView(APIView):
-    def post(self, request):
-        data = request.data
+User = get_user_model()
 
-        # Validar que no exista el email
-        if User.objects.filter(email=data["email"]).exists():
-            return Response({"error": "El email ya está registrado"}, status=status.HTTP_400_BAD_REQUEST)
+class InterestViewSet(viewsets.ModelViewSet):
+    queryset = Interest.objects.all()
+    serializer_class = InterestSerializer
+    permission_classes = [IsAdminOrReadOnly]
 
-        # Crear usuario
-        user = User.objects.create(
-            username=data["email"],
-            email=data["email"],
-            first_name=data.get("fullname", ""),
-            password=make_password(data["password"])
-        )
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAdminUserProfile]
 
-        # Crear perfil asociado con intereses y carrera
-        UserProfile.objects.create(
-            user=user,
-            career_interest=data.get("career_interest", ""),
-            interests=data.get("intereses", [])
-        )
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAdminUserProfile()]
+        return [IsAuthenticated()]
 
-        return Response({"message": "Usuario creado correctamente"}, status=status.HTTP_201_CREATED)
-class LoginView(APIView):
-    def post(self, request):
-        email = request.data.get('email')
-        password = request.data.get('password')
+class RegisterView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    permission_classes = [AllowAny]
+    serializer_class = RegisterSerializer
 
-        user = authenticate(username=email, password=password)
+    def perform_create(self, serializer):
+        user = serializer.save()
+        UserProfile.objects.create(user=user, role='student')
 
-        if user is not None:
-            return Response({"message": "Login exitoso"}, status=status.HTTP_200_OK)
-        else:
-            return Response({"message": "Credenciales inválidas"}, status=status.HTTP_401_UNAUTHORIZED)
+class UserProfileViewSet(viewsets.ModelViewSet):
+    queryset = UserProfile.objects.all()
+    serializer_class = UserProfileSerializer
+    permission_classes = [IsAuthenticated, IsAdminOrOwner]
+    parser_classes = (MultiPartParser, FormParser)
 
+    def get_queryset(self):
+        if self.request.user.profile.role == 'admin':
+            return UserProfile.objects.all()
+        return UserProfile.objects.filter(user=self.request.user)
 
-class PerfilUsuarioView(APIView):
-    permission_classes = [IsAuthenticated]
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
-    def get(self, request):
-        profile, created = UserProfile.objects.get_or_create(user=request.user)
-        serializer = UserProfileSerializer(profile)
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
         return Response(serializer.data)
 
-    def put(self, request):
-        profile, created = UserProfile.objects.get_or_create(user=request.user)
-        serializer = UserProfileSerializer(profile, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Perfil actualizado con éxito"})
-        return Response(serializer.errors, status=400)
-    
+class CreateAdminView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAdminUserProfile, CanCreateAdmin]
 
+    def perform_create(self, serializer):
+        user = serializer.save()
+        UserProfile.objects.create(user=user, role='admin')
+
+class ProfilePictureView(generics.UpdateAPIView):
+    queryset = UserProfile.objects.all()
+    serializer_class = UserProfileSerializer
+    permission_classes = [IsAuthenticated, IsAdminOrOwner]
+    parser_classes = (MultiPartParser, FormParser)
+
+    def get_object(self):
+        return get_object_or_404(UserProfile, user=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data)

@@ -27,8 +27,6 @@ SECRET_KEY = 'django-insecure-)6-4zvv9=$=0w7=zj$bs^o(-$&w(#4%q-irn8s9(42-w62ow_e
 DEBUG = True
 
 ALLOWED_HOSTS = []
-
-
 # Application definition
 
 INSTALLED_APPS = [
@@ -55,6 +53,8 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'core.urls'
+AUTHENTICATION_BACKENDS = ['django.contrib.auth.backends.ModelBackend']
+
 # Permite conexiones desde el frontend
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
